@@ -1,13 +1,10 @@
 package com.example.wakeup;
 
 import android.annotation.SuppressLint;
-import android.content.Context;
-import android.graphics.Color;
 import android.hardware.Sensor;
 import android.hardware.SensorEvent;
 import android.hardware.SensorEventListener;
 import android.hardware.SensorManager;
-import android.os.AsyncTask;
 import android.os.Bundle;
 import android.os.PowerManager;
 import android.widget.Toast;
@@ -25,6 +22,10 @@ public class MainActivity extends AppCompatActivity {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_main);
 
+        startWakeUp();
+    }
+
+    private void startWakeUp() {
         sensorManager = (SensorManager) getSystemService(SENSOR_SERVICE);
         proximitySensor = sensorManager.getDefaultSensor(Sensor.TYPE_PROXIMITY);
 
@@ -38,9 +39,8 @@ public class MainActivity extends AppCompatActivity {
             public void onSensorChanged(SensorEvent sensorEvent) {
                 if (sensorEvent.values[0] < proximitySensor.getMaximumRange()) {
                     // WAKE UP
+                    Toast.makeText(getApplicationContext(), "Waking Screen Up", Toast.LENGTH_LONG).show();
                     wakeupScreen();
-                } else {
-                    getWindow().getDecorView().setBackgroundColor(Color.GREEN);
                 }
             }
 
@@ -52,24 +52,21 @@ public class MainActivity extends AppCompatActivity {
 
         sensorManager.registerListener(proximitySensorListener, proximitySensor,
                 2 * 1000 * 1000);
+
     }
 
-    @SuppressLint("StaticFieldLeak")
+    @SuppressLint("InvalidWakeLockTag")
     private void wakeupScreen() {
-        new AsyncTask<Void, Void, Exception>() {
-            @SuppressLint("WakelockTimeout")
-            @Override
-            protected Exception doInBackground(Void... params) {
-                try {
-                    PowerManager powerManager = (PowerManager) getSystemService(Context.POWER_SERVICE);
-                    @SuppressLint("InvalidWakeLockTag") PowerManager.WakeLock fullWakeLock = powerManager.newWakeLock((PowerManager.SCREEN_BRIGHT_WAKE_LOCK | PowerManager.FULL_WAKE_LOCK | PowerManager.ACQUIRE_CAUSES_WAKEUP), "Loneworker - FULL WAKE LOCK");
-                    fullWakeLock.acquire(); // turn on
-                } catch (Exception e) {
-                    return e;
-                }
-                return null;
-            }
-        }.execute();
+        PowerManager.WakeLock screenLock = null;
+        if ((getSystemService(POWER_SERVICE)) != null) {
+            screenLock = ((PowerManager) getSystemService(POWER_SERVICE)).newWakeLock(
+                    PowerManager.SCREEN_BRIGHT_WAKE_LOCK | PowerManager.ACQUIRE_CAUSES_WAKEUP, "TAG");
+            screenLock.acquire(10 * 60 * 1000L /*10 minutes*/);
+
+
+            screenLock.release();
+        }
     }
+
 
 }
