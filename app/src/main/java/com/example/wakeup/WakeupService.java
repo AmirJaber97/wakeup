@@ -1,9 +1,14 @@
 package com.example.wakeup;
 
 import android.annotation.SuppressLint;
+import android.app.Notification;
+import android.app.NotificationChannel;
+import android.app.NotificationManager;
+import android.app.PendingIntent;
 import android.app.Service;
 import android.content.Context;
 import android.content.Intent;
+import android.graphics.Color;
 import android.hardware.Sensor;
 import android.hardware.SensorEvent;
 import android.hardware.SensorEventListener;
@@ -13,13 +18,17 @@ import android.os.IBinder;
 import android.os.PowerManager;
 import android.util.Log;
 
-import androidx.localbroadcastmanager.content.LocalBroadcastManager;
-
-import java.util.Objects;
+import androidx.core.app.NotificationCompat;
 
 public class WakeupService extends Service {
 
-    //TODO: FIX BUG - onDestroy Called Automatically, Killing my service.
+    /*
+    TODO: Change Button text from Service intent (Especially when clicked from Notification)
+     */
+
+    public static final String ACTION_START_FOREGROUND_SERVICE = "ACTION_START_FOREGROUND_SERVICE";
+    public static final String ACTION_STOP_FOREGROUND_SERVICE = "ACTION_STOP_FOREGROUND_SERVICE";
+
 
     private static final String TAG = "WakeupService";
     private SensorManager sensorManager;
@@ -36,41 +45,47 @@ public class WakeupService extends Service {
 
     @Override
     public void onCreate() {
-        Log.d(TAG, "onCreate: New Service Has been created");
-
     }
 
     @Override
     public int onStartCommand(Intent intent, int flags, int startId) {
-        Log.d(TAG, "onStart: Starting Wakeup Service");
-        startWakeUp();
-        Log.d(TAG, "onStart: Wakeup Service has Been started");
+        Log.d(TAG, "onStart: Intent received");
+
+        if (intent != null) {
+            String action = intent.getAction();
+
+            if (action != null) {
+                switch (action) {
+                    case ACTION_START_FOREGROUND_SERVICE:
+                        startWakeUp();
+                        break;
+                    case ACTION_STOP_FOREGROUND_SERVICE:
+                        killWakeUp();
+                        break;
+                }
+            }
+        }
         return START_STICKY;
     }
 
+
     @Override
     public void onDestroy() {
-        Log.d(TAG, "onDestroy: Killing Wakeup Service");
-        killWakeUp();
-        Log.d(TAG, "onDestroy: Wakeup Service successfully killed");
-    }
-
-    private void killWakeUp() {
-        if (proximitySensorListener != null) {
-            sensorManager.unregisterListener(proximitySensorListener);
-            sensorManager = null;
-        }
+        Intent restartService = new Intent("RestartService");
+        sendBroadcast(restartService);
+        Log.d(TAG, "onDestroy: Service stopped successfully");
     }
 
     private void startWakeUp() {
         sensorManager = (SensorManager) getSystemService(SENSOR_SERVICE);
         if (sensorManager != null) {
             proximitySensor = sensorManager.getDefaultSensor(Sensor.TYPE_PROXIMITY);
+            showNotification();
         }
 
         if (proximitySensor == null) {
             ToastUtils.longToast(this, "Proximity Sensor not available");
-            sendIntentToCloseApp();
+            killWakeUp();
         }
 
         proximitySensorListener = new SensorEventListener() {
@@ -81,17 +96,12 @@ public class WakeupService extends Service {
                     if (powerManager != null) {
                         Log.d(TAG, "onSensorChanged: Is Screen ON?: " + powerManager.isScreenOn());
                         if (!powerManager.isScreenOn()) {
-//                            wakeupScreen();
                             turnScreenOn();
                         }
                     } else {
-//                        wakeupScreen();
                         turnScreenOn();
                     }
-
                 }
-
-
             }
 
             @Override
@@ -105,20 +115,47 @@ public class WakeupService extends Service {
 
     }
 
-    private void sendIntentToCloseApp() {
-        LocalBroadcastManager localBroadcastManager = LocalBroadcastManager.getInstance(WakeupService.this);
-        localBroadcastManager.sendBroadcast(new Intent(
-                "com.wakeup.action.close"
-        ));
+    private void showNotification() {
+        String NOTIFICATION_CHANNEL_ID = "com.jeee.wakeup";
+        String channelName = "My Background Service";
+        NotificationChannel chan = new NotificationChannel(NOTIFICATION_CHANNEL_ID, channelName, NotificationManager.IMPORTANCE_NONE);
+        chan.setLightColor(Color.BLUE);
+        chan.setLockscreenVisibility(Notification.VISIBILITY_PRIVATE);
+        NotificationManager manager = (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
+        assert manager != null;
+        manager.createNotificationChannel(chan);
+        NotificationCompat.Builder notificationBuilder = new NotificationCompat.Builder(this, NOTIFICATION_CHANNEL_ID);
+
+        Intent stopIntent = new Intent(this, WakeupService.class);
+        stopIntent.setAction(ACTION_STOP_FOREGROUND_SERVICE);
+        PendingIntent pendingStopIntent = PendingIntent.getService(this, 0, stopIntent, 0);
+        NotificationCompat.Action stopAction = new NotificationCompat.Action(android.R.drawable.ic_media_play, "Turn off", pendingStopIntent);
+
+        Intent myIntent = new Intent(this, MainActivity.class);
+        @SuppressLint("WrongConstant") PendingIntent pendingIntent = PendingIntent.getActivity(
+                this,
+                0,
+                myIntent,
+                Intent.FLAG_ACTIVITY_NEW_TASK);
+
+        Notification notification = notificationBuilder.setOngoing(true)
+                .setSmallIcon(R.drawable.ic_launcher_background)
+                .setContentTitle("Wave to Wake up is now Active")
+                .setContentIntent(pendingIntent)
+                .setPriority(NotificationManager.IMPORTANCE_MIN)
+                .addAction(stopAction)
+                .setCategory(Notification.CATEGORY_SERVICE)
+                .build();
+        startForeground(2, notification);
     }
 
-    @SuppressLint("InvalidWakeLockTag")
-    private void wakeupScreen() {
-        PowerManager.WakeLock screenLock = ((PowerManager) Objects.requireNonNull(getSystemService(POWER_SERVICE))).newWakeLock(
-                PowerManager.SCREEN_BRIGHT_WAKE_LOCK | PowerManager.ACQUIRE_CAUSES_WAKEUP, "Wake Lock");
-        screenLock.acquire();
-
-        screenLock.release();
+    private void killWakeUp() {
+        if (proximitySensorListener != null) {
+            sensorManager.unregisterListener(proximitySensorListener);
+            sensorManager = null;
+        }
+        stopForeground(true);
+        stopSelf();
     }
 
     @SuppressLint("StaticFieldLeak")
@@ -134,12 +171,7 @@ public class WakeupService extends Service {
                         fullWakeLock = powerManager.newWakeLock((PowerManager.SCREEN_BRIGHT_WAKE_LOCK | PowerManager.FULL_WAKE_LOCK | PowerManager.ACQUIRE_CAUSES_WAKEUP), "TAG");
                     }
                     if (fullWakeLock != null) {
-                        fullWakeLock.acquire(); // turn on
-                        try {
-                            Thread.sleep(20000); // turn on duration
-                        } catch (InterruptedException e) {
-                            e.printStackTrace();
-                        }
+                        fullWakeLock.acquire();
                         fullWakeLock.release();
                     }
 
